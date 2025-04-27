@@ -1,0 +1,2 @@
+[console_scripts]
+spoof = main:cli

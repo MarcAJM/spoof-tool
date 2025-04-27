@@ -1,0 +1,7 @@
+setup.py
+spoof_tool.egg-info/PKG-INFO
+spoof_tool.egg-info/SOURCES.txt
+spoof_tool.egg-info/dependency_links.txt
+spoof_tool.egg-info/entry_points.txt
+spoof_tool.egg-info/requires.txt
+spoof_tool.egg-info/top_level.txt
