@@ -1,5 +1,5 @@
-import scapy
 import click
+import dns_spoof_table
 
 @click.group()
 def spoof():
@@ -10,14 +10,21 @@ def start():
     click.echo("TODO")
 
 @spoof.group()
-def dns_spoof_table():
+def table():
     pass
 
-@dns_spoof_table.command()
-def add(domainname: str, ip_address: str):
-    click.echo("TODO")
+@table.command()
+@click.argument("domainname", type=str)
+@click.argument("ip_address", type=str)
+def add(domainname, ip_address):
+    dns_spoof_table.add(domainname, ip_address)
 
-@dns_spoof_table.command()
-def remove(domainname: str):
-    click.echo("TODO")
+@table.command()
+@click.argument("domainname", type=str)
+def remove(domainname):
+    dns_spoof_table.remove(domainname)
+
+@table.command()
+def remove_all():
+    dns_spoof_table.remove_all()
 

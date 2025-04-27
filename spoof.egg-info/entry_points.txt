@@ -1,2 +1,2 @@
 [console_scripts]
-spoof = main:cli
+spoof = main:spoof
