@@ -3,3 +3,4 @@ Name: spoof
 Version: 0.1.0
 Requires-Dist: click
 Requires-Dist: scapy
+Requires-Dist: tabulate
