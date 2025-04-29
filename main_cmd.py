@@ -1,5 +1,6 @@
 import click
 import table_cmd
+from spoof_session import SpoofSession
 
 @click.group()
 def spoof():
@@ -7,6 +8,7 @@ def spoof():
 
 @spoof.command()
 def start():
-    click.echo("TODO")
+    """ Start the spoof. """
+    SpoofSession("192.156.533.245")
 
 spoof.add_command(table_cmd.table)
