@@ -6,9 +6,11 @@ from spoof_session import SpoofSession
 def spoof():
     pass
 
+
 @spoof.command()
-def start():
+@click.argument("address", type=str)
+def start(address):
     """ Start the spoof. """
-    SpoofSession("192.156.533.245")
+    SpoofSession(address)
 
 spoof.add_command(table_cmd.table)
