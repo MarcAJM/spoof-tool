@@ -7,7 +7,7 @@ setup(
     install_requires=["click", "scapy", "tabulate"],
     entry_points={
         "console_scripts": [
-            "spoof = main_cmd:spoof",
+            "spoof = main:spoof",
         ]
     }
 )

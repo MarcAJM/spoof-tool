@@ -1,2 +1,2 @@
 [console_scripts]
-spoof = main_cmd:spoof
+spoof = main:spoof
