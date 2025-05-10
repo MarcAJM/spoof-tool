@@ -1,7 +1,7 @@
 import click
 from scapy.layers.l2 import Ether, ARP
 from scapy.sendrecv import srp
-
+from scapy.all import *
 
 def print_error_message(message):
     click.echo(click.style("✖ ", bold=True, fg="red") + click.style(message, bold=True))
@@ -28,3 +28,12 @@ def find_mac_address(ip_address):
             print_info_message("No response arrived for attempt " + str(i+1))
 
     return None
+
+def get_own_mac():
+    iface = conf.iface
+    return get_if_hwaddr(iface)
+
+def get_own_ip():
+    # This returns the local ip not external ip (Arp always uses local ip adresses)
+    iface = conf.iface
+    return get_if_addr(iface)
