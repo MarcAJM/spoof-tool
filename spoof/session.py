@@ -1,5 +1,5 @@
 import tkinter as tk
-import utils
+from . import utils
 from scapy.all import *
 class SessionView:
 
@@ -35,6 +35,8 @@ class SessionModel:
         ipToSpoof = ip_to_spoof
         print(3)
 
+        Ether = scapy.Ether
+        ARP = scapy.ARP 
         arp = Ether() / ARP()
         arp[Ether].src = macAttacker 
         arp[ARP].hwsrc = macAttacker              

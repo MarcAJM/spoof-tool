@@ -1,7 +1,7 @@
 import click
 from tabulate import tabulate
-import utils
-from tables import target_links_table as table
+from .. import utils
+from ..tables import target_links_table as table
 
 @click.group()
 def target_links():

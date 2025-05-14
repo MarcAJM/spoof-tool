@@ -1,9 +1,9 @@
 
 import click
 
-import utils
-from commands import table_cmd
-from commands import links_cmd
+from . import utils
+from .commands import table_cmd
+from .commands import links_cmd
 import subprocess
 import sys
 import os

@@ -1,6 +1,6 @@
 import click
-from tables import dns_spoof_table as table
-import utils
+from ..tables import dns_spoof_table as table
+from .. import utils
 from tabulate import tabulate
 
 
