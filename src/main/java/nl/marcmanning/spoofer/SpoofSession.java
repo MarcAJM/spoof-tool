@@ -1,171 +1,191 @@
 package nl.marcmanning.spoofer;
 
-import javafx.application.Platform;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
 import nl.marcmanning.spoofer.components.LogView;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
-import java.net.Socket;
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 
 public class SpoofSession {
-    private volatile boolean isRunning;
-    private final Map<String, String> macAddresses;
-    private final List<TargetEntry> targets;
-    private final LogView logView;
-    private final BlockingQueue<TargetEntry> targetQueue;
-    private final String attackerMac = "32:c9:39:c7:07:22" ;
-    private final long refreshTime;
 
-    private Socket pythonSocket;
+    private volatile boolean isRunning;
+    private final LogView logView;
+    private final ObjectMapper mapper;
+    private final List<String> toBeSendMessages;
+    ObservableList<TargetEntry> targets;
+
     private PrintWriter out;
     private BufferedReader in;
 
-    public SpoofSession(ObservableList<TargetEntry> targetEntries, LogView logView, long refreshTime) {
-        this.isRunning = false;
-        this.macAddresses = new HashMap<>();
-        this.logView = logView;
-        targetQueue = new LinkedBlockingQueue<>();
-        targets = new ArrayList<>();
-        this.refreshTime = refreshTime;
+    private Process pythonProcess;
+    private Path temp;
 
-        /* Add everything to the targetQueue to prevent concurrency issues */
-        for (TargetEntry entry : targetEntries) {
-            try {
-                targetQueue.put(entry.copy());
-            } catch (InterruptedException e) {
-                System.out.println(e.getMessage());
-            }
-        }
-        targetEntries.addListener((ListChangeListener<TargetEntry>) change -> {
+    public SpoofSession(LogView logView, ObservableList<TargetEntry> targets) {
+        this.logView = logView;
+        this.isRunning = false;
+        this.mapper = new ObjectMapper();
+        this.toBeSendMessages = new ArrayList<>();
+        this.targets = targets;
+
+        /* When a target gets added or removed, let python know. */
+        targets.addListener((ListChangeListener<TargetEntry>) change -> {
             while (change.next()) {
                 if (change.wasAdded()) {
-                    for (TargetEntry entry : change.getAddedSubList()) {
-                        try {
-                            targetQueue.put(entry.copy());
-                        } catch (InterruptedException e) {
-                            System.out.println(e.getMessage());
-                        }
+                    for (TargetEntry target : change.getAddedSubList()) {
+                        outputMessage(createAddTargetMessage(target));
+                    }
+                }
+                if (change.wasRemoved()) {
+                    for (TargetEntry target : change.getRemoved()) {
+                        outputMessage(createRemoveTargetMessage(target));
                     }
                 }
             }
         });
+    }
 
-        try {
-            Scapy.sniff();
-            Thread.sleep(1000);
-            pythonSocket = new Socket("localhost", 9999);
-            out = new PrintWriter(pythonSocket.getOutputStream());
-            in = new BufferedReader(new InputStreamReader(pythonSocket.getInputStream()));
-        } catch (IOException e) {
-            logView.logError("Failed to connect to python sniffer: " + e.getMessage());
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+    public void start() {
+        if (!isRunning) {
+            isRunning = true;
+            for (TargetEntry target : targets) {
+                String msg = createAddTargetMessage(target);
+                toBeSendMessages.add(msg);
+            }
+            Thread thread = new Thread(() -> {
+                if (!this.init()) return;
+
+                /* Let python know of all the messages */
+                for (String msg : toBeSendMessages) {
+                    outputMessage(msg);
+                }
+                toBeSendMessages.clear();
+
+                listen();
+            });
+            thread.setDaemon(true);
+            thread.start();
         }
     }
 
     public void stop() {
-        isRunning = false;
-
         try {
             if (out != null) {
                 out.println("{\"action\": \"shutdown\"}");
                 out.flush();
             }
-            if (in != null) in.close();
             if (out != null) out.close();
-            if (pythonSocket != null) pythonSocket.close();
-
-            Scapy.stopSniffing();
+            if (in != null) in.close();
         } catch (IOException e) {
-            logView.logError("Error during shutdown: " + e.getMessage());
+            logView.logError(e.getMessage());
         }
-
-        logView.logInfo("Stopped spoofing");
+        stopSpoofer();
+        if (temp != null)  temp.toFile().deleteOnExit();
+        isRunning = false;
     }
 
-    /* Run this method in another thread then the JavaFX main thread */
-    public void start() {
-        isRunning = true;
-        if (in == null || out == null) {
-            logView.logError("In or out is null");
-        } else {
-            Thread thread1 = new Thread(this::run);
-            Thread thread2 = new Thread(this::runPacketReader);
-            thread1.setDaemon(true);
-            thread2.setDaemon(true);
-            thread1.start();
-            thread2.start();
-        }
+    /* Start a server socket and also connect to it */
+    private boolean init() {
+        startSpoofer();
+        out = new PrintWriter(pythonProcess.getOutputStream());
+        in = new BufferedReader(new InputStreamReader(pythonProcess.getInputStream()));
+        return true;
     }
 
-    private void run() {
-        long time = System.nanoTime();
-        while (isRunning) {
-
-            /* Find the mac addresses of the newly incoming target entries (when a user
-               adds a target while in a session) */
-            TargetEntry entry;
-            while ((entry = targetQueue.poll()) != null) {
-                putMacAddressesWhenMissing(entry);
-                if (macAddresses.containsKey(entry.getIp1()) && macAddresses.containsKey(entry.getIp2())) {
-                    targets.add(entry);
-                }
-            }
-
-            if (System.nanoTime() - time >= refreshTime) {
-                for (TargetEntry target : targets) {
-                    Scapy.sendArpReply(target.getIp1(), macAddresses.get(target.getIp1()), target.getIp2(), attackerMac);
-                    Scapy.sendArpReply(target.getIp2(), macAddresses.get(target.getIp2()), target.getIp1(), attackerMac);
-                }
-                time = time + refreshTime;
-            }
-        }
-    }
-
-    private void runPacketReader() {
-        String line;
+    /* Listen for incoming messages */
+    private void listen() {
         try {
+            String line;
             while ((line = in.readLine()) != null) {
-                String finalLine = line;
-                Platform.runLater(() -> logView.logInfo(finalLine));
+                JsonNode node = mapper.readTree(line);
+                handleMessage(node);
             }
-        } catch (IOException e) {
-            Platform.runLater(() ->
-                    logView.logError("Python sniffer connection lost: " + e.getMessage()));
+        } catch(IOException e) {
+            logView.logError(e.getMessage());
         }
     }
 
-    private void putMacAddressesWhenMissing(TargetEntry entry) {
-        boolean result1 = putMacAddressesWhenMissing(entry.getIp1());
-        boolean result2 = putMacAddressesWhenMissing(entry.getIp2());
-        if (result1 && result2) {
-            out.println("{\"action\": \"add_pair\", \"ip1\": \"" + entry.getIp1() + "\", \"ip2\": \"" + entry.getIp2() + "\"}");
+    /* Handle message accordingly depending on the type */
+    private void handleMessage(JsonNode node) {
+        String type = node.has("type") ? node.get("type").asText() : "";
+
+        switch (type) {
+            case "packet" -> handlePacketMessage(node);
+            case "info" -> {
+                String msg = node.get("info").asText();
+                logView.logInfo(msg);
+            }
+            case "error" -> {
+                String msg = node.get("error").asText();
+                logView.logError(msg);
+            }
+        }
+    }
+
+    private void handlePacketMessage(JsonNode json) {
+//        String timestamp = json.has("timestamp") ? json.get("timestamp").asText() : "N/A";
+//        String srcIp = json.has("src_ip") ? json.get("src_ip").asText() : "N/A";
+//        String dstIp = json.has("dst_ip") ? json.get("dst_ip").asText() : "N/A";
+        String summary = json.has("summary") ? json.get("summary").asText() : "";
+
+        String message = String.format("""
+        Packet Received:
+        • Summary  : %s
+        """, summary);
+
+        logView.logInfo(message);
+    }
+
+    private void outputMessage(String msg) {
+        if (out != null) {
+            out.println(msg);
             out.flush();
         }
     }
 
-    private boolean putMacAddressesWhenMissing(String ip) {
-        if (!macAddresses.containsKey(ip)) {
-            String macAddress = Scapy.getMacAddress(ip);
-            if (!macAddress.equals("None")) {
-                macAddresses.put(ip, macAddress);
-                logView.logInfo(ip + " --> " + macAddress);
-                return true;
-            } else {
-                logView.logError(ip + " --> NONE");
-                return false;
+    private void startSpoofer() {
+        if (pythonProcess != null && pythonProcess.isAlive()) return;
+        try (InputStream in = SpoofSession.class.getResourceAsStream("scripts/spoof3.py")) {
+            if (in == null) {
+                logView.logError("Could not find spoof3.py in resources.");
+                return;
             }
+            temp = Files.createTempFile("spoof", ".py");
+            Files.copy(in, temp, StandardCopyOption.REPLACE_EXISTING);
+            List<String> command = new ArrayList<>(List.of("python3", temp.toAbsolutePath().toString()));
+            ProcessBuilder processBuilder = new ProcessBuilder();
+            processBuilder.command(command);
+            pythonProcess = processBuilder.start();
+
+        } catch (IOException e) {
+            logView.logError(e.getMessage());
         }
-        return true;
+    }
+
+    private void stopSpoofer() {
+        if (pythonProcess != null && pythonProcess.isAlive()) {
+            pythonProcess.destroy();
+        }
+    }
+
+    private String createAddTargetMessage(TargetEntry target) {
+        return String.format(
+                "{\"action\": \"add_target\", \"ip1\": \"%s\", \"ip2\": \"%s\"}",
+                target.getIp1(), target.getIp2()
+        );
+    }
+
+    private String createRemoveTargetMessage(TargetEntry target) {
+        return String.format(
+                "{\"action\": \"remove_target\", \"ip1\": \"%s\", \"ip2\": \"%s\"}",
+                target.getIp1(), target.getIp2()
+        );
     }
 }

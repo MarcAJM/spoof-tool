@@ -68,7 +68,7 @@ public class TargetsController {
         ip1Column.setCellValueFactory(new PropertyValueFactory<>("ip1"));
         ip2Column.setCellValueFactory(new PropertyValueFactory<>("ip2"));
 
-        targetLinksTable.setFile(new File("storage/target_links.json"));
+        targetLinksTable.setFile("target_links.json");
         targetLinksTable.load(new TypeReference<>() {});
 
         // Make sure that some character must be in both text fields in order to be able to add it

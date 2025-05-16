@@ -3,9 +3,13 @@ package nl.marcmanning.spoofer.components;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import javafx.scene.control.TableView;
+import net.harawata.appdirs.AppDirs;
+import net.harawata.appdirs.AppDirsFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 public class JsonTableView<S> extends TableView<S> {
@@ -18,8 +22,16 @@ public class JsonTableView<S> extends TableView<S> {
         this.mapper = new ObjectMapper();
     }
 
-    public void setFile(File file) {
-        this.file = file;
+    public void setFile(String fileName) {
+        AppDirs appDirs = AppDirsFactory.getInstance();
+        Path dir = Path.of(appDirs.getUserDataDir("Spoofer", null, "default"));
+        try {
+            Files.createDirectories(dir);
+            Path filePath = dir.resolve(fileName);
+            file = new File(filePath.toString());
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public void add(S value) {

@@ -57,7 +57,7 @@ public class DnsSpoofTableController {
         domainNameColumn.setCellValueFactory(new PropertyValueFactory<>("domainName"));
         maliciousIpColumn.setCellValueFactory(new PropertyValueFactory<>("maliciousIp"));
 
-        dnsSpoofTable.setFile(new File("storage/dns_spoof_entries.json"));
+        dnsSpoofTable.setFile("dns_spoof_entries.json");
         dnsSpoofTable.load(new TypeReference<>() {});
 
         // Make sure that some character must be in both text fields in order to be able to add it

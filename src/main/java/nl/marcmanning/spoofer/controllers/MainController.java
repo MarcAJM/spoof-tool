@@ -27,7 +27,7 @@ public class MainController {
     @FXML
     public void initialize() {
         targetsTable = (TableView<TargetEntry>) targetsView.getCenter();
-        session = new SpoofSession(targetsTable.getItems(), logView, 5_000_000_000L);
+        session = new SpoofSession(logView, targetsTable.getItems());
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (session != null) session.stop();
         }));
