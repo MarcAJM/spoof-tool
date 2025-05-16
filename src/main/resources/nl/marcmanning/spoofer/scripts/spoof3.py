@@ -36,7 +36,7 @@ def send_packet_info(packet):
                     # Skip pairs with missing MACs
                     continue
 
-                if (src == mac1 and dst == attacker_mac) or (src == mac2 and dst == attacker_mac) or (src == attacker_mac and dst == mac1) or (src == attacker_mac and dst == mac2):
+                if (src == mac1 and dst == attacker_mac) or (src == mac2 and dst == attacker_mac):
                     info = {
                         "type": "packet",
                         "summary": packet.summary(),

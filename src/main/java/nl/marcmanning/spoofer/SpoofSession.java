@@ -152,7 +152,7 @@ public class SpoofSession {
 
     private void startSpoofer() {
         if (pythonProcess != null && pythonProcess.isAlive()) return;
-        try (InputStream in = SpoofSession.class.getResourceAsStream("scripts/spoof3.py")) {
+        try (InputStream in = SpoofSession.class.getResourceAsStream("scripts/spoof.py")) {
             if (in == null) {
                 logView.logError("Could not find spoof3.py in resources.");
                 return;
