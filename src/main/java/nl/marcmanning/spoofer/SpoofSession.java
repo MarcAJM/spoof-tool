@@ -154,7 +154,7 @@ public class SpoofSession {
         if (pythonProcess != null && pythonProcess.isAlive()) return;
         try (InputStream in = SpoofSession.class.getResourceAsStream("scripts/spoof.py")) {
             if (in == null) {
-                logView.logError("Could not find spoof3.py in resources.");
+                logView.logError("Could not find spoof.py in resources.");
                 return;
             }
             temp = Files.createTempFile("spoof", ".py");

