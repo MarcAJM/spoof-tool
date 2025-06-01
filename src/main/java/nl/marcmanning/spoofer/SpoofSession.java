@@ -159,7 +159,8 @@ public class SpoofSession {
             }
             temp = Files.createTempFile("spoof", ".py");
             Files.copy(in, temp, StandardCopyOption.REPLACE_EXISTING);
-            List<String> command = new ArrayList<>(List.of("python3", temp.toAbsolutePath().toString()));
+            String pythonCmd = System.getProperty("os.name").toLowerCase().contains("win") ? "python" : "python3";
+List<String> command = List.of(pythonCmd, temp.toAbsolutePath().toString());
             ProcessBuilder processBuilder = new ProcessBuilder();
             processBuilder.command(command);
             pythonProcess = processBuilder.start();

