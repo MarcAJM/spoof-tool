@@ -33,7 +33,7 @@
       <fx:include source="targets-view.fxml" fx:id="targetsView"/>
    </Tab>
    <Tab text="DNS Spoof Table">
-      <fx:include source="dns-spoof-table-view.fxml"/>
+      <fx:include source="dns-spoof-table-view.fxml" fx:id="dnsSpoofTableView"/>
    </Tab>
    <Tab text="Settings">
       <fx:include source="settings-view.fxml"/>

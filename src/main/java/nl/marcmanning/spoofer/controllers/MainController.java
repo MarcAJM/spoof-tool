@@ -4,6 +4,7 @@ import javafx.fxml.FXML;
 import javafx.scene.control.Button;
 import javafx.scene.control.TableView;
 import javafx.scene.layout.BorderPane;
+import nl.marcmanning.spoofer.DnsSpoofEntry;
 import nl.marcmanning.spoofer.SpoofSession;
 import nl.marcmanning.spoofer.TargetEntry;
 import nl.marcmanning.spoofer.components.LogView;
@@ -22,12 +23,17 @@ public class MainController {
     @FXML
     private BorderPane targetsView;
 
+    @FXML
+    private BorderPane dnsSpoofTableView;
+
     private TableView<TargetEntry> targetsTable;
+    private TableView<DnsSpoofEntry> dnsSpoofEntryTable;
 
     @FXML
     public void initialize() {
         targetsTable = (TableView<TargetEntry>) targetsView.getCenter();
-        session = new SpoofSession(logView, targetsTable.getItems());
+        dnsSpoofEntryTable = (TableView<DnsSpoofEntry>) dnsSpoofTableView.getCenter();
+        session = new SpoofSession(logView, targetsTable.getItems(), dnsSpoofEntryTable.getItems());
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (session != null) session.stop();
         }));

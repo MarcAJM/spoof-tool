@@ -21,6 +21,7 @@ public class SpoofSession {
     private final ObjectMapper mapper;
     private final List<String> toBeSendMessages;
     ObservableList<TargetEntry> targets;
+    ObservableList<DnsSpoofEntry> dnsSpoofEntries;
 
     private PrintWriter out;
     private BufferedReader in;
@@ -28,12 +29,13 @@ public class SpoofSession {
     private Process pythonProcess;
     private Path temp;
 
-    public SpoofSession(LogView logView, ObservableList<TargetEntry> targets) {
+    public SpoofSession(LogView logView, ObservableList<TargetEntry> targets, ObservableList<DnsSpoofEntry> dnsSpoofEntries) {
         this.logView = logView;
         this.isRunning = false;
         this.mapper = new ObjectMapper();
         this.toBeSendMessages = new ArrayList<>();
         this.targets = targets;
+        this.dnsSpoofEntries = dnsSpoofEntries;
 
         /* When a target gets added or removed, let python know. */
         targets.addListener((ListChangeListener<TargetEntry>) change -> {
@@ -50,6 +52,20 @@ public class SpoofSession {
                 }
             }
         });
+        dnsSpoofEntries.addListener((ListChangeListener<DnsSpoofEntry>) change -> {
+            while (change.next()) {
+                if (change.wasAdded()) {
+                    for (DnsSpoofEntry entry : change.getAddedSubList()) {
+                        outputMessage(createAddDnsTargetMessage(entry));
+                    }
+                }
+                if (change.wasRemoved()) {
+                    for (DnsSpoofEntry entry : change.getRemoved()) {
+                        outputMessage(createRemoveDnsTargetMessage(entry));
+                    }
+                }
+            }
+        });
     }
 
     public void start() {
@@ -57,6 +73,10 @@ public class SpoofSession {
             isRunning = true;
             for (TargetEntry target : targets) {
                 String msg = createAddTargetMessage(target);
+                toBeSendMessages.add(msg);
+            }
+            for (DnsSpoofEntry entry : dnsSpoofEntries) {
+                String msg = createAddDnsTargetMessage(entry);
                 toBeSendMessages.add(msg);
             }
             Thread thread = new Thread(() -> {
@@ -186,6 +206,20 @@ public class SpoofSession {
         return String.format(
                 "{\"action\": \"remove_target\", \"ip1\": \"%s\", \"ip2\": \"%s\"}",
                 target.getIp1(), target.getIp2()
+        );
+    }
+
+    private String createAddDnsTargetMessage(DnsSpoofEntry entry) {
+        return String.format(
+                "{\"action\": \"add_dns_target\", \"domainname\": \"%s\", \"ip\": \"%s\"}",
+                entry.getDomainName(), entry.getMaliciousIpAddress()
+        );
+    }
+
+    private String createRemoveDnsTargetMessage(DnsSpoofEntry entry) {
+        return String.format(
+                "{\"action\": \"remove_dns_target\", \"domainname\": \"%s\"}",
+                entry.getDomainName()
         );
     }
 }
