@@ -23,13 +23,13 @@
           <execution>
             <id>default-cli</id>
             <configuration>
-              <mainClass>nl.marcmanning.spoofer/nl.marcmanning.spoofer.SpoofApplication</mainClass>
+              <mainClass>nl.marcmanning.spoofer.SpoofApplication</mainClass>
               <launcher>app</launcher>
               <jlinkZipName>app</jlinkZipName>
               <jlinkImageName>app</jlinkImageName>
               <noManPages>true</noManPages>
               <stripDebug>true</stripDebug>
-              <noHeaderFiles>true</noHeaderFiles>
+              <noFiles>true</noFiles>
             </configuration>
           </execution>
         </executions>

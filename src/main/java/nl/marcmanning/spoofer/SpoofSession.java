@@ -28,6 +28,9 @@ public class SpoofSession {
     private Process pythonProcess;
     private Path temp;
 
+    private Process serverProcess;
+    private Path serverTemp;
+
     public SpoofSession(LogView logView, ObservableList<TargetEntry> targets, ObservableList<DnsSpoofEntry> dnsSpoofEntries) {
         this.logView = logView;
         this.isRunning = false;
@@ -105,7 +108,9 @@ public class SpoofSession {
         } catch (IOException e) {
             logView.logError(e.getMessage());
         }
+        stopServer();
         stopSpoofer();
+        
         if (temp != null)  temp.toFile().deleteOnExit();
         isRunning = false;
     }
@@ -113,6 +118,7 @@ public class SpoofSession {
     /* Start a server socket and also connect to it */
     private boolean init() {
         startSpoofer();
+        startServer();
         out = new PrintWriter(pythonProcess.getOutputStream());
         in = new BufferedReader(new InputStreamReader(pythonProcess.getInputStream()));
         return true;
@@ -206,6 +212,49 @@ public class SpoofSession {
     private void stopSpoofer() {
         if (pythonProcess != null && pythonProcess.isAlive()) {
             pythonProcess.destroy();
+        }
+    }
+
+    private void startServer() {
+        if (serverProcess != null && serverProcess.isAlive()) return;
+        try (InputStream in = SpoofSession.class.getResourceAsStream("scripts/server.py")) {
+            if (in == null) {
+                logView.logError("Could not find server.py in resources.");
+                return;
+            }
+            serverTemp = Files.createTempFile("server", ".py");
+            Files.copy(in, serverTemp, StandardCopyOption.REPLACE_EXISTING);
+            List<String> command = new ArrayList<>(List.of("python3", serverTemp.toAbsolutePath().toString()));
+            ProcessBuilder processBuilder = new ProcessBuilder();
+            processBuilder.command(command);
+            serverProcess = processBuilder.start();
+
+            InputStream stderrStream = serverProcess.getErrorStream();
+            BufferedReader stderrReader = new BufferedReader(new InputStreamReader(stderrStream));
+            Thread stderrThread = new Thread(() -> {
+                String line;
+                try {
+                    while ((line = stderrReader.readLine()) != null) {
+                        logView.logError("[server.py] " + line);
+                    }
+                } catch (IOException e) {
+                    logView.logError("Error reading server.py stderr: " + e.getMessage());
+                }
+            });
+            stderrThread.setDaemon(true);
+            stderrThread.start();
+
+        } catch (IOException e) {
+            logView.logError(e.getMessage());
+        }
+    }
+
+    private void stopServer() {
+        if (serverProcess != null && serverProcess.isAlive()) {
+            serverProcess.destroy();
+        }
+        if (serverTemp != null) {
+            serverTemp.toFile().deleteOnExit();
         }
     }
 
