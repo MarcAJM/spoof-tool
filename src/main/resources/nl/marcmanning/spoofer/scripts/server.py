@@ -27,20 +27,14 @@ def clean_headers(headers):
     return {k: v for k, v in headers.items() if k.lower() not in headers_to_remove}
 
 
-def get_path_to_lock_icon():
-    paths = [
-        os.path.join(os.path.dirname(__file__), 'lock.ico'),
-        os.path.join(os.getcwd(), 'lock.ico'),
-        os.path.join(os.path.dirname(__file__), '..', 'lock.ico'),
-    ]
-    for path in paths:
-        if os.path.exists(path):
-            return path
-    log_error("Error: Could not find lock.ico")
-    return None
 
 async def handle_request(request):
     try:
+        # Extract the original domain from the Host header
+        original_host = request.headers.get('Host')
+        if not original_host:
+            return web.Response(status=400, text="Missing Host header")
+        original_host = original_host.split(':')[0]
         query_params = parse_qs(request.rel_url.query)
         original_host = query_params.get('original_host', [None])[0]
 
@@ -82,6 +76,9 @@ async def handle_request(request):
     except Exception as e:
         log_error(f"Proxy error: {e}")
         return web.Response(status=502, text=f"Proxy error: {e}")
+
+def get_path_to_lock_icon():
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'lock.ico'))
 
 # favicon handler
 async def handle_favicon(request):

